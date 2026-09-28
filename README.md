@@ -4,11 +4,18 @@
 
 # Cadrocfile
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/Rust-1.92+-orange.svg)](https://www.rust-lang.org/)
+[![GTK4](https://img.shields.io/badge/GTK-4.12+-blue.svg)](https://www.gtk.org/)
+[![libadwaita](https://img.shields.io/badge/libadwaita-1.5+-purple.svg)](https://gnome.pages.gitlab.gnome.org/libadwaita/)
+
 **A fast GTK4 file manager for Linux, written in Rust.**
 
 Browse, copy, move, rename — plus the things that usually send you to a
 terminal: NTFS drives Windows left dirty, LUKS volumes, any archive format,
 and downloads.
+
+[Installation](#install) · [Features](#what-it-does) · [Shortcuts](#shortcuts) · [Building from source](#from-source-or-manual-download) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 </div>
 

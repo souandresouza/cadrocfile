@@ -5,5 +5,4 @@
 *.so
 *.a
 *.d
-Cargo.lock
 dist/
