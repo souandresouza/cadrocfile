@@ -1,0 +1,216 @@
+/* Cadrocfile's visual identity.
+ *
+ * The app lives on a tiling compositor, so it is built as a set of floating
+ * panes with real gaps between them rather than the edge-to-edge surfaces a
+ * GNOME app usually presents. Everything quantitative — sizes, device paths,
+ * filesystem types, the location entry — is set in monospace, because that is
+ * the vernacular of the thing being managed. The rest inherits the system font
+ * so the app still belongs on the desktop.
+ */
+
+/* ── surfaces ───────────────────────────────────────────────────────────
+ * Colours come from libadwaita, so the app follows the system light/dark
+ * scheme and stays legible in both. The identity is carried by the accent, the
+ * monospace treatment of anything quantitative, and the capacity meters — not
+ * by overriding the platform's chrome, which only made the sidebar
+ * unreadable. */
+
+/* One accent, carried through selection, focus and meters. Both values are
+   replaced at load time from the user's setting; see `app::load_stylesheet`.
+   The literals here are the default and what the file falls back to. */
+@define-color fm_accent #E04434;
+@define-color fm_accent_bright #E9705F;
+
+/* Two matching panels with a gap between them. The sidebar used to keep square
+   corners while the file area was rounded, so the two met in a mismatched
+   seam. */
+.sidebar-pane,
+.content-pane { background: transparent; }
+
+.pane-content,
+.pane-sidebar {
+  background: @view_bg_color;
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px alpha(currentColor, 0.07);
+}
+
+.pane-content { margin: 0 8px 8px 4px; }
+.pane-sidebar { margin: 0 4px 8px 8px; }
+
+.file-grid,
+.file-list,
+.pane-content scrolledwindow,
+.pane-content viewport { background: transparent; }
+
+/* ── location bar ───────────────────────────────────────────────────────── */
+
+.path-bar {
+  border-radius: 9px;
+  background: alpha(currentColor, 0.06);
+  padding: 2px;
+  min-width: 220px;
+}
+
+.crumb {
+  padding: 3px 9px;
+  min-height: 26px;
+  border-radius: 7px;
+}
+
+.crumb-current { font-weight: 700; }
+.crumb-separator { opacity: 0.35; padding: 0 1px; }
+
+.path-entry {
+  font-family: monospace;
+  border-radius: 9px;
+}
+
+.path-entry.error { box-shadow: inset 0 0 0 1px alpha(@error_color, 0.7); }
+
+/* ── icon grid ──────────────────────────────────────────────────────────── */
+
+.file-grid > child {
+  margin: 1px;
+  padding: 2px 0;
+  border-radius: 12px;
+}
+
+.file-grid > child:hover { background: alpha(currentColor, 0.06); }
+
+.file-grid > child:selected,
+.file-list > listview > row:selected {
+  background: alpha(@fm_accent, 0.22);
+  box-shadow: inset 0 0 0 1px alpha(@fm_accent, 0.55);
+  color: inherit;
+}
+
+.file-grid > child:focus-visible,
+.file-list > listview > row:focus-visible {
+  outline: 2px solid @fm_accent;
+  outline-offset: -2px;
+}
+
+.file-tile { border-radius: 12px; }
+
+/* ── details list ───────────────────────────────────────────────────────── */
+
+.file-list > listview > row {
+  padding: 5px 10px;
+  margin: 1px 6px;
+  border-radius: 10px;
+}
+
+.file-list > header { font-weight: 700; }
+.numeric { font-variant-numeric: tabular-nums; }
+
+/* ── devices ────────────────────────────────────────────────────────────
+ * Every drive states its capacity, its filesystem and whether it is mounted —
+ * the three things you open a sidebar to find out, and the three things a
+ * plain text list never tells you. */
+
+.navigation-sidebar { background: transparent; }
+
+.navigation-sidebar > row {
+  min-height: 34px;
+  border-radius: 9px;
+  margin: 1px 6px;
+  padding: 2px 4px;
+}
+
+.navigation-sidebar > row:selected {
+  background: alpha(@fm_accent, 0.20);
+  color: inherit;
+}
+
+.sidebar-heading {
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  opacity: 0.5;
+}
+
+.device-detail {
+  font-family: monospace;
+  font-size: 0.76em;
+  opacity: 0.6;
+}
+
+row.drop-target {
+  background: alpha(@fm_accent, 0.28);
+  box-shadow: inset 0 0 0 1px @fm_accent;
+}
+
+/* ── context menu ───────────────────────────────────────────────────────
+ * Built from buttons rather than GtkPopoverMenu, so the padding, radius and
+ * accelerator column are ours to set. */
+
+.cadrocfile-menu > contents {
+  padding: 6px;
+  border-radius: 14px;
+}
+
+.menu-list { min-width: 200px; }
+
+.menu-item {
+  border-radius: 9px;
+  padding: 7px 12px;
+  min-height: 0;
+  font-weight: 400;
+}
+
+.menu-item:hover { background: alpha(currentColor, 0.09); }
+
+.menu-accel {
+  font-size: 0.85em;
+  opacity: 0.45;
+  font-family: monospace;
+}
+
+.menu-separator {
+  margin: 5px 10px;
+  background: alpha(currentColor, 0.10);
+}
+
+/* ── jobs and status ────────────────────────────────────────────────────── */
+
+.job-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
+.job-card progressbar { margin: 2px 0; }
+
+.status-bar {
+  min-height: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-capacity { font-family: monospace; font-size: 0.85em; }
+
+/* ── dialogs ────────────────────────────────────────────────────────────── */
+
+.shred-warning {
+  background: alpha(@warning_color, 0.12);
+  box-shadow: inset 0 0 0 1px alpha(@warning_color, 0.35);
+  border-radius: 12px;
+}
+
+.property .subtitle { font-family: monospace; }
+
+/* Accent swatches in Settings. The colour itself comes from a per-button
+   provider; these rules only give them a consistent shape and a clear mark for
+   the one in use. */
+.accent-swatch {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px alpha(black, 0.18);
+}
+
+.accent-swatch-selected {
+  box-shadow:
+    inset 0 0 0 1px alpha(black, 0.18),
+    0 0 0 2px @view_bg_color,
+    0 0 0 4px @fm_accent;
+}

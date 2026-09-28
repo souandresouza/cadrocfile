@@ -1,0 +1,45 @@
+[package]
+name = "cadrocfile"
+version = "0.4.1"
+edition = "2024"
+rust-version = "1.92"
+description = "A fast, modern GTK4/libadwaita file manager"
+license = "MIT"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
+gio = { version = "0.22", features = ["v2_74"] }
+glib = { version = "0.22", features = ["v2_74"] }
+gdk = { package = "gdk4", version = "0.11" }
+pango = "0.22"
+gdk-pixbuf = "0.22"
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "6.0"
+anyhow = "1.0"
+thiserror = "2.0"
+
+zbus = "5.19"
+
+compress-tools = "0.16"
+humansize = "2.1"
+chrono = "0.4"
+rayon = "1.12"
+walkdir = "2.5"
+rand = "0.10"
+libc = "0.2"
+urlencoding = "2.1"
+memchr = "2.7"
+shell-words = "1.1"
+async-channel = "2.5"
+ureq = { version = "3.4.1", features = ["rustls", "cookies", "json"] }
+gettext-rs = { version = "0.7", features = ["gettext-system"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

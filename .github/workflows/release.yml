@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Pinned deliberately, not `ubuntu-latest`. The runner's glibc becomes the
+    # binary's floor — building on a newer image would silently raise it and
+    # break distros that were working. 24.04 ships glibc 2.39, GTK 4.14 and
+    # libadwaita 1.5, which is the oldest combination that satisfies this
+    # project and still covers every current distro.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libgtk-4-dev libadwaita-1-dev libarchive-dev gettext
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Compile translations
+        run: |
+          for po in po/*.po; do
+            lang=$(basename "$po" .po)
+            msgfmt --output-file "po/${lang}.mo" "$po"
+          done
+
+      - name: Record what the binary actually needs
+        id: reqs
+        run: |
+          GLIBC=$(objdump -T target/release/cadrocfile \
+            | grep -oP 'GLIBC_\K[0-9.]+' | sort -V | tail -1)
+          echo "glibc=$GLIBC" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Runtime requirements"
+            echo
+            echo "- glibc >= $GLIBC"
+            echo "- GTK >= 4.12, libadwaita >= 1.5, libarchive 3.x"
+            echo
+            echo '```'
+            ldd target/release/cadrocfile | sed 's/^\s*//' | sort
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DIR="cadrocfile-${VERSION}-x86_64-linux"
+          mkdir -p "dist/$DIR"
+          cp target/release/cadrocfile "dist/$DIR/"
+          cp README.md LICENSE "dist/$DIR/"
+          mkdir -p "dist/$DIR/share/applications"
+          cp data/dev.cadrocfile.Files.desktop "dist/$DIR/share/applications/"
+          cp -r data/icons "dist/$DIR/share/"
+          mkdir -p "dist/$DIR/share/locale"
+          cp -r po/*.mo "dist/$DIR/share/locale/" 2>/dev/null || true
+          printf 'glibc>=%s\ngtk4>=4.12\nlibadwaita>=1.5\n' \
+            "${{ steps.reqs.outputs.glibc }}" > "dist/$DIR/REQUIREMENTS"
+          tar -C dist -czf "dist/$DIR.tar.gz" "$DIR"
+          # Checksums are what `install.sh` verifies the download against, so
+          # they are generated here rather than by hand.
+          ( cd dist && sha256sum "$DIR.tar.gz" > SHA256SUMS )
+          cat dist/SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Binaries only. `install.sh` lives in the repository and is served
+          # from there, so it can be fixed without cutting a release and can
+          # never be a stale copy of the one in the tree.
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+          body: |
+            Install on any supported distro:
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
+            ```
+
+            Or download `cadrocfile-*-x86_64-linux.tar.gz` below, check it against
+            `SHA256SUMS`, and copy the binary onto your `PATH`.
+
+            Requires glibc >= ${{ steps.reqs.outputs.glibc }}, GTK >= 4.12 and
+            libadwaita >= 1.5. The installer builds from source instead when
+            those aren't met and Rust is available.
