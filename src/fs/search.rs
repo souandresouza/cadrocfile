@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn matching_is_case_insensitive() {
         let root = tree();
-        let handle = start(root.path().to_path_buf(), "FiLeMaN-DeEp".into(), true);
+        let handle = start(root.path().to_path_buf(), "CaDrOcFiLe-DeEp".into(), true);
         let (names, _) = collect(&handle);
         assert_eq!(names, vec!["CADROCFILE-deep.rs".to_string()]);
     }

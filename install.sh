@@ -14,7 +14,8 @@
 # likely to need it.
 set -eu
 
-REPO="0znio/cadrocfile"
+REPO="souandresouza/cadrocfile"
+BRANCH="master"
 APP="cadrocfile"
 DESKTOP="dev.cadrocfile.Files.desktop"
 APP_ICON="dev.cadrocfile.Files"
@@ -491,7 +492,7 @@ install_source() {
             git clone --depth 1 "https://github.com/$REPO.git" "$tmp/src" >/dev/null 2>&1 \
                 || die "git clone failed"
         else
-            fetch "https://github.com/$REPO/archive/refs/heads/main.tar.gz" "$tmp/src.tar.gz" \
+            fetch "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz" "$tmp/src.tar.gz" \
                 || die "source download failed"
             mkdir -p "$tmp/src" && tar -C "$tmp/src" --strip-components=1 -xzf "$tmp/src.tar.gz"
         fi

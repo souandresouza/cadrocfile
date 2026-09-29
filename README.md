@@ -39,7 +39,7 @@ Light mode
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/0znio/cadrocfile/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/souandresouza/cadrocfile/master/install.sh | sh
 ```
 
 Works out what your machine needs: installs dependencies with your own package
@@ -75,17 +75,17 @@ curl -fsSL .../install.sh | sh -s -- --from-source --prefix /usr/local
 Needs Rust 1.92+ and dev headers for `gtk4`, `libadwaita`, `libarchive`.
 
 ```sh
-git clone https://github.com/0znio/cadrocfile.git && cd cadrocfile
+git clone https://github.com/souandresouza/cadrocfile.git && cd cadrocfile
 make && make test
 make install                      # ~/.local, no root
 sudo make install PREFIX=/usr/local   # system-wide
 ```
 
-Or grab the tarball from the [latest release](https://github.com/0znio/cadrocfile/releases/latest):
+Or grab the tarball from the [latest release](https://github.com/souandresouza/cadrocfile/releases/latest):
 
 ```sh
-curl -fsSLO https://github.com/0znio/cadrocfile/releases/latest/download/SHA256SUMS
-curl -fsSLO https://github.com/0znio/cadrocfile/releases/latest/download/cadrocfile-0.4.1-x86_64-linux.tar.gz
+curl -fsSLO https://github.com/souandresouza/cadrocfile/releases/latest/download/SHA256SUMS
+curl -fsSLO https://github.com/souandresouza/cadrocfile/releases/latest/download/cadrocfile-0.4.1-x86_64-linux.tar.gz
 sha256sum -c SHA256SUMS
 tar -xzf cadrocfile-*-x86_64-linux.tar.gz && cd cadrocfile-*-x86_64-linux
 install -Dm755 cadrocfile ~/.local/bin/cadrocfile

@@ -802,7 +802,7 @@ mod tests {
         assert!(message.contains("401 Unauthorized"), "{message}");
 
         // A question rclone could not ask means the account is not set up.
-        let pending = br#"{"State":"x","Option":{tr!("Name"):"otp"},"Error":"","Result":""}"#;
+        let pending = br#"{"State":"x","Option":{"Name":"otp"},"Error":"","Result":""}"#;
         assert!(create_error(pending).is_some(), "a pending question must be reported");
 
         // Output that is not the JSON report tells us nothing either way.
