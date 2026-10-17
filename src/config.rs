@@ -126,6 +126,37 @@ impl Default for Config {
     }
 }
 
+/// Expands a leading `~` or `$HOME` to the user's home directory.
+///
+/// A config that hardcodes `/home/alice` only works on Alice's machine, so
+/// the config lets both spellings through. Paths starting with neither come
+/// back unchanged - what to do with a relative path is the caller's call.
+///
+/// Returns `None` only when the home directory cannot be determined, which is
+/// the one case where guessing would silently point somewhere wrong.
+pub fn expand_home(path: &Path) -> Option<PathBuf> {
+    if path.is_absolute() {
+        return Some(path.to_owned());
+    }
+    let s = path.to_str()?;
+    let rest = match s {
+        "~" | "$HOME" => String::new(),
+        _ => match s
+            .strip_prefix("~/")
+            .or_else(|| s.strip_prefix("$HOME/"))
+        {
+            Some(rest) => rest.to_owned(),
+            None => return Some(path.to_owned()),
+        },
+    };
+    let home = dirs::home_dir()?;
+    Some(if rest.is_empty() {
+        home
+    } else {
+        home.join(rest)
+    })
+}
+
 impl Config {
     pub fn config_dir() -> PathBuf {
         dirs::config_dir()
@@ -172,6 +203,15 @@ impl Config {
         self.ntfs_fuse_volumes.dedup();
         self.window_width = self.window_width.max(480);
         self.window_height = self.window_height.max(360);
+        // Expand ~ and $HOME *before* the is_absolute() filter below,
+        // otherwise a ~-prefixed favourite is silently dropped on load. A
+        // hardcoded /home/alice also stops working the moment the config
+        // moves to another machine or user.
+        self.favourites = self
+            .favourites
+            .iter()
+            .filter_map(|p| expand_home(p))
+            .collect();
         self.favourites.retain(|p| p.is_absolute());
         self.favourites.dedup();
     }
@@ -218,5 +258,53 @@ impl Config {
         }
         self.icon_size = ICON_SIZES[next];
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expands_tilde_and_home_var() {
+        let home = dirs::home_dir().expect("home do usuario");
+        for input in ["~", "~/", "$HOME"] {
+            assert_eq!(expand_home(Path::new(input)), Some(home.clone()));
+        }
+        assert_eq!(
+            expand_home(Path::new("~/Downloads/Telegram Desktop")),
+            Some(home.join("Downloads/Telegram Desktop"))
+        );
+        assert_eq!(
+            expand_home(Path::new("$HOME/Videos")),
+            Some(home.join("Videos"))
+        );
+    }
+
+    #[test]
+    fn leaves_other_paths_alone() {
+        // Absolute and relative paths are not the config's business to
+        // rewrite; the caller decides what to do with a relative one.
+        for input in ["/usr/share", "/", "relative/dir", "..", "~user/x"] {
+            assert_eq!(expand_home(Path::new(input)), Some(PathBuf::from(input)));
+        }
+    }
+
+    #[test]
+    fn sanitize_expands_before_dropping_relative() {
+        // The ordering is the whole point: filtering on is_absolute() first
+        // would throw away every ~ favourite without a word.
+        let mut cfg = Config::default();
+        cfg.favourites = vec![
+            PathBuf::from("~/Videos"),
+            PathBuf::from("nao/absoluto"),
+            PathBuf::from("/tmp"),
+        ];
+        cfg.sanitize();
+
+        assert_eq!(
+            cfg.favourites,
+            vec![dirs::home_dir().unwrap().join("Videos"), PathBuf::from("/tmp")]
+        );
     }
 }

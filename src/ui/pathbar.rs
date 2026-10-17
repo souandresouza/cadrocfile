@@ -469,13 +469,11 @@ impl PathBar {
         let dir = if dir_part.is_empty() {
             PathBuf::from("/")
         } else {
-            let expanded = if let Some(rest) = dir_part.strip_prefix("~") {
-                match dirs::home_dir() {
-                    Some(h) => h.join(rest.trim_start_matches('/')),
-                    None => return,
-                }
-            } else {
-                PathBuf::from(dir_part)
+            // expand_home also handles $HOME, which the inline version here
+            // did not. Relative paths come back untouched and get joined
+            // with the current directory below.
+            let Some(expanded) = crate::config::expand_home(Path::new(dir_part)) else {
+                return;
             };
             if expanded.is_absolute() { expanded } else { self.current.borrow().join(expanded) }
         };
