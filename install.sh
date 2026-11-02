@@ -232,17 +232,18 @@ runtime_packages() {
 #
 #   ntfs-3g, pigz          NTFS repair, fast .tar.gz
 #   gvfs + backends        network shares (SMB, NFS, ...)
+#   gvfs-mtp/afc/gphoto2   Android phones, iPhones, cameras
 #   rclone, fuse3          cloud drives
 #   ffmpeg, poppler        video and PDF thumbnails
 #   gstreamer good, libav  video and audio playing in the preview
 optional_packages() {
     case "$FAMILY" in
-        arch)   echo "ntfs-3g pigz gvfs gvfs-smb gvfs-nfs rclone fuse3 ffmpeg poppler gst-plugins-good gst-libav" ;;
+        arch)   echo "ntfs-3g pigz gvfs gvfs-smb gvfs-nfs gvfs-mtp gvfs-afc gvfs-gphoto2 rclone fuse3 ffmpeg poppler gst-plugins-good gst-libav" ;;
         debian) echo "ntfs-3g pigz gvfs gvfs-backends gvfs-fuse rclone fuse3 ffmpeg poppler-utils gstreamer1.0-plugins-good gstreamer1.0-libav" ;;
-        fedora) echo "ntfs-3g pigz gvfs gvfs-smb gvfs-nfs gvfs-fuse rclone fuse3 ffmpeg-free poppler-utils gstreamer1-plugins-good gstreamer1-plugin-libav" ;;
-        suse)   echo "ntfs-3g pigz gvfs gvfs-backend-samba gvfs-fuse rclone fuse3 ffmpeg poppler-tools gstreamer-plugins-good gstreamer-plugins-libav" ;;
-        alpine) echo "ntfs-3g pigz gvfs gvfs-smb rclone fuse3 ffmpeg poppler-utils gst-plugins-good gst-libav" ;;
-        void)   echo "ntfs-3g pigz gvfs gvfs-smb rclone fuse3 ffmpeg poppler gst-plugins-good1 gst-libav" ;;
+        fedora) echo "ntfs-3g pigz gvfs gvfs-smb gvfs-nfs gvfs-mtp gvfs-afc gvfs-gphoto2 gvfs-fuse rclone fuse3 ffmpeg-free poppler-utils gstreamer1-plugins-good gstreamer1-plugin-libav" ;;
+        suse)   echo "ntfs-3g pigz gvfs gvfs-backend-samba gvfs-backend-mtp gvfs-backend-afc gvfs-backend-gphoto2 gvfs-fuse rclone fuse3 ffmpeg poppler-tools gstreamer-plugins-good gstreamer-plugins-libav" ;;
+        alpine) echo "ntfs-3g pigz gvfs gvfs-smb gvfs-mtp gvfs-afc gvfs-gphoto2 rclone fuse3 ffmpeg poppler-utils gst-plugins-good gst-libav" ;;
+        void)   echo "ntfs-3g pigz gvfs gvfs-smb gvfs-mtp gvfs-afc gvfs-gphoto2 rclone fuse3 ffmpeg poppler gst-plugins-good1 gst-libav" ;;
         gentoo) echo "sys-fs/ntfs3g app-arch/pigz gnome-base/gvfs net-misc/rclone sys-fs/fuse media-video/ffmpeg app-text/poppler media-libs/gst-plugins-good media-plugins/gst-plugins-libav" ;;
         solus)  echo "ntfs-3g pigz gvfs rclone fuse3 ffmpeg poppler gstreamer-1.0-plugins-good gstreamer-1.0-libav" ;;
         *)      echo "" ;;
@@ -544,5 +545,7 @@ have fusermount3 || have fusermount || \
     warn "fuse3 not installed — cloud drives cannot be mounted"
 [ -f /usr/share/gvfs/mounts/smb.mount ] || \
     warn "gvfs-smb not installed — Windows network shares will be unavailable"
+[ -f /usr/share/gvfs/mounts/mtp.mount ] || \
+    warn "gvfs-mtp not installed — Android phones will not be detected over USB"
 
 printf '\n  Run it with: %scadrocfile%s [path]\n\n' "$B" "$R"

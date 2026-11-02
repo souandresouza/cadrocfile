@@ -1114,6 +1114,79 @@ impl Window {
         self.transient_toast(&format!("Forgot {}", server.display_name()));
     }
 
+    /// Mounts a phone, camera or media player through gvfs, then opens it.
+    ///
+    /// The device is already known to the volume monitor — that is why it has a
+    /// row — so all that is left is the mount itself. Credentials and the
+    /// phone-side authorization prompt are handled by gvfs.
+    pub(crate) fn open_portable(self: &Rc<Self>, device: crate::fs::portable::Portable) {
+        let this = Rc::clone(self);
+        glib::spawn_future_local(async move {
+            if let Some(path) = device.path.clone().filter(|path| path.is_dir()) {
+                this.open_path(path);
+                return;
+            }
+
+            this.toast(&format!("Connecting to {}…", device.name));
+            let operation = gtk::MountOperation::new(Some(&this.window));
+            match crate::fs::remote::mount(&device.uri, operation.upcast_ref()).await {
+                Ok(path) => {
+                    this.refresh_portables();
+                    this.open_path(path);
+                }
+                Err(message) if message.contains("cancelled") => {
+                    this.transient_toast("Connection cancelled");
+                }
+                Err(message) => {
+                    // A missing gvfs backend or FUSE bridge has its own fix;
+                    // telling the user to unlock the phone would send them to
+                    // the wrong place.
+                    let detail = if message.to_lowercase().contains("gvfs") {
+                        message
+                    } else {
+                        format!("{message}\n\n{}", device.hint())
+                    };
+                    dialogs::show_error(
+                        &this.widget(),
+                        &format!("Could not connect to {}", device.name),
+                        &detail,
+                    );
+                }
+            }
+        });
+    }
+
+    /// Unmounts a phone or camera, leaving it safe to unplug.
+    pub(crate) fn disconnect_portable(self: &Rc<Self>, device: crate::fs::portable::Portable) {
+        let this = Rc::clone(self);
+        glib::spawn_future_local(async move {
+            // Leave the device before unmounting it: a view pointed inside a
+            // directory that is about to disappear would immediately try to
+            // rescan a dead path.
+            if let Some(path) = &device.path
+                && this.current_dir().is_some_and(|dir| dir.starts_with(path))
+            {
+                let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+                this.tab().history.borrow_mut().forget(path);
+                this.navigate_to(Location::Directory(home), false);
+            }
+
+            match crate::fs::remote::unmount(&device.uri).await {
+                Ok(()) => {
+                    this.transient_toast(&format!("Disconnected {}", device.name));
+                }
+                Err(message) => {
+                    dialogs::show_error(
+                        &this.widget(),
+                        &format!("Could not disconnect {}", device.name),
+                        &message,
+                    );
+                }
+            }
+            this.refresh_portables();
+        });
+    }
+
     /// Re-reads cloud accounts off the main thread and updates the sidebar.
     ///
     /// Every caller is reacting to something that just changed the answer, so

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Phones and cameras under **Portable devices**: Android over MTP, iPhone over
+  AFC and cameras in PTP mode are mounted through gvfs and browsed as folders
+- The installer pulls the matching gvfs backend for those devices
+
 ## [0.4.1] - 2026-09-28
 
 ### Added

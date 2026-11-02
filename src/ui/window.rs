@@ -397,6 +397,8 @@ impl Window {
         this.wire_widgets();
         this.refresh_drives();
         this.watch_drive_changes();
+        this.refresh_portables();
+        this.watch_portable_changes();
         this.refresh_trash_count();
         this.sidebar.set_favourites(this.config.borrow().favourites.clone());
         this.sidebar.set_servers(this.config.borrow().servers.clone());
@@ -529,6 +531,20 @@ impl Window {
         self.sidebar.connect_forget_server(move |server| {
             if let Some(this) = weak.upgrade() {
                 this.forget_server(server);
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.sidebar.connect_open_portable(move |device| {
+            if let Some(this) = weak.upgrade() {
+                this.open_portable(device);
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.sidebar.connect_disconnect_portable(move |device| {
+            if let Some(this) = weak.upgrade() {
+                this.disconnect_portable(device);
             }
         });
 
@@ -1562,6 +1578,76 @@ impl Window {
                 }
             }
         });
+    }
+
+    /// Reloads the portable devices gvfs knows about.
+    ///
+    /// The call only reads proxy objects the volume monitor already holds, so
+    /// it is cheap enough for the main loop; mounting is what can block, and
+    /// that stays asynchronous in [`crate::ui::actions`].
+    pub(crate) fn refresh_portables(self: &Rc<Self>) {
+        self.sidebar.set_portables(crate::fs::portable::list());
+        if let Some(current) = self.current_dir() {
+            self.sidebar.set_current(&current);
+        }
+    }
+
+    /// Keeps phones, cameras and media players in step with gvfs.
+    ///
+    /// UDisks2 has its own watcher in [`Self::watch_drive_changes`], but MTP
+    /// and AFC devices never touch it — only the `GVolumeMonitor` sees them.
+    fn watch_portable_changes(self: &Rc<Self>) {
+        let monitor = gio::VolumeMonitor::get();
+
+        let weak = Rc::downgrade(self);
+        monitor.connect_volume_added(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.portable_changed();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        monitor.connect_volume_changed(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.portable_changed();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        monitor.connect_volume_removed(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.portable_changed();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        monitor.connect_mount_added(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.portable_changed();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        monitor.connect_mount_changed(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.portable_changed();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        monitor.connect_mount_removed(move |_, _| {
+            if let Some(this) = weak.upgrade() {
+                this.portable_changed();
+            }
+        });
+    }
+
+    fn portable_changed(self: &Rc<Self>) {
+        self.refresh_portables();
+
+        // Unplugging the phone while its folder is open leaves the view
+        // pointed at a path that no longer resolves, exactly like a removed
+        // disk.
+        if let Some(current) = self.current_dir()
+            && !current.is_dir()
+        {
+            self.recover_from_missing_directory(&current);
+        }
     }
 
     /// Navigates away from a directory that has disappeared.

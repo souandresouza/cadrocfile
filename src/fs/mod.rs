@@ -4,6 +4,7 @@ pub mod download;
 pub mod entry;
 pub mod ops;
 pub mod parallel;
+pub mod portable;
 pub mod recent;
 pub mod remote;
 pub mod scan;

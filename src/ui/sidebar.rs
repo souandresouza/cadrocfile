@@ -47,6 +47,8 @@ enum Target {
     Volume(Box<Volume>),
     /// A saved server. Clicking mounts it if it isn't already.
     Server(Box<crate::fs::remote::Server>),
+    /// A phone, camera or media player exposed by gvfs.
+    Portable(Box<crate::fs::portable::Portable>),
     /// A cloud account. Clicking mounts it if it isn't already.
     Cloud(Box<crate::fs::cloud::Account>),
     /// The rows that open the two "add" dialogs.
@@ -64,6 +66,8 @@ pub struct Sidebar {
     volumes: RefCell<Vec<Volume>>,
     favourites: RefCell<Vec<PathBuf>>,
     servers: RefCell<Vec<crate::fs::remote::Server>>,
+    /// Phones, cameras and media players gvfs currently knows about.
+    portables: RefCell<Vec<crate::fs::portable::Portable>>,
     /// Cloud accounts as of the last refresh. Rebuilt from rclone rather than
     /// stored, so a remote added outside Cadrocfile still shows up.
     cloud: RefCell<Vec<crate::fs::cloud::Account>>,
@@ -78,6 +82,8 @@ pub struct Sidebar {
     on_open_server: Callback<crate::fs::remote::Server>,
     on_disconnect_server: Callback<crate::fs::remote::Server>,
     on_forget_server: Callback<crate::fs::remote::Server>,
+    on_open_portable: Callback<crate::fs::portable::Portable>,
+    on_disconnect_portable: Callback<crate::fs::portable::Portable>,
     on_open_cloud: Callback<crate::fs::cloud::Account>,
     on_disconnect_cloud: Callback<crate::fs::cloud::Account>,
     on_forget_cloud: Callback<crate::fs::cloud::Account>,
@@ -111,6 +117,7 @@ impl Sidebar {
             volumes: RefCell::new(Vec::new()),
             favourites: RefCell::new(Vec::new()),
             servers: RefCell::new(Vec::new()),
+            portables: RefCell::new(Vec::new()),
             cloud: RefCell::new(Vec::new()),
             trash_count: RefCell::new(0),
             on_navigate: RefCell::new(None),
@@ -122,6 +129,8 @@ impl Sidebar {
             on_open_server: RefCell::new(None),
             on_disconnect_server: RefCell::new(None),
             on_forget_server: RefCell::new(None),
+            on_open_portable: RefCell::new(None),
+            on_disconnect_portable: RefCell::new(None),
             on_open_cloud: RefCell::new(None),
             on_disconnect_cloud: RefCell::new(None),
             on_forget_cloud: RefCell::new(None),
@@ -164,6 +173,12 @@ impl Sidebar {
     pub fn connect_forget_server(&self, f: impl Fn(crate::fs::remote::Server) + 'static) {
         *self.on_forget_server.borrow_mut() = Some(Rc::new(f));
     }
+    pub fn connect_open_portable(&self, f: impl Fn(crate::fs::portable::Portable) + 'static) {
+        *self.on_open_portable.borrow_mut() = Some(Rc::new(f));
+    }
+    pub fn connect_disconnect_portable(&self, f: impl Fn(crate::fs::portable::Portable) + 'static) {
+        *self.on_disconnect_portable.borrow_mut() = Some(Rc::new(f));
+    }
     pub fn connect_open_cloud(&self, f: impl Fn(crate::fs::cloud::Account) + 'static) {
         *self.on_open_cloud.borrow_mut() = Some(Rc::new(f));
     }
@@ -204,6 +219,12 @@ impl Sidebar {
         self.rebuild();
     }
 
+    /// Replaces the portable devices shown, mounted or not.
+    pub fn set_portables(self: &Rc<Self>, portables: Vec<crate::fs::portable::Portable>) {
+        *self.portables.borrow_mut() = portables;
+        self.rebuild();
+    }
+
     /// Replaces the known cloud accounts.
     ///
     /// The list is passed in rather than read here: finding it runs rclone, and
@@ -236,6 +257,7 @@ impl Sidebar {
             let active = match target {
                 Target::Path(p) => p == path,
                 Target::Volume(v) => v.mount_point.as_deref() == Some(path),
+                Target::Portable(device) => device.path.as_deref() == Some(path),
                 Target::Server(server) => shares
                     .get_or_insert_with(crate::fs::remote::mounted)
                     .iter()
@@ -265,6 +287,7 @@ impl Sidebar {
         self.build_places();
         self.build_favourites();
         self.build_system();
+        self.build_portables();
         self.build_devices();
         self.build_network();
         self.build_cloud();
@@ -361,6 +384,35 @@ impl Sidebar {
             let Some(list) = list.as_ref() else { continue };
 
             let row = self.make_volume_row(&volume);
+            list.append(&row);
+        }
+    }
+
+    /// Phones, cameras and media players reported by gvfs.
+    ///
+    /// They look like drives but are not block devices, so they cannot come
+    /// through UDisks2 with the volumes above. The row stays put across
+    /// connect/disconnect: only its badge and menu change.
+    fn build_portables(self: &Rc<Self>) {
+        let portables = self.portables.borrow().clone();
+        if portables.is_empty() {
+            return;
+        }
+
+        let list = self.new_section(Some("Portable devices"));
+        for device in &portables {
+            let connected = device.is_connected();
+            let row = self.make_row(
+                &device.name,
+                device.icon(),
+                connected.then_some("●"),
+                Target::Portable(Box::new(device.clone())),
+            );
+            row.set_tooltip_text(Some(&match &device.path {
+                Some(path) => format!("{} — connected at {}", device.uri, path.display()),
+                None => format!("{} — click to connect", device.uri),
+            }));
+            self.attach_portable_menu(&row, device);
             list.append(&row);
         }
     }
@@ -491,6 +543,39 @@ impl Sidebar {
         attach_menu_gesture(row, menu);
     }
 
+    /// Right-click on a portable device: open or disconnect it.
+    fn attach_portable_menu(
+        self: &Rc<Self>,
+        row: &gtk::ListBoxRow,
+        device: &crate::fs::portable::Portable,
+    ) {
+        let menu = gio::Menu::new();
+        if device.is_connected() {
+            menu.append(Some(tr!("Open")), Some("portable.open"));
+            menu.append(Some(tr!("Disconnect")), Some("portable.disconnect"));
+        } else {
+            menu.append(Some(tr!("Connect")), Some("portable.open"));
+        }
+
+        let actions = gio::SimpleActionGroup::new();
+        for name in ["open", "disconnect"] {
+            let action = gio::SimpleAction::new(name, None);
+            let (weak, device, disconnect) =
+                (Rc::downgrade(self), device.clone(), name == "disconnect");
+            action.connect_activate(move |_, _| {
+                let Some(this) = weak.upgrade() else { return };
+                if disconnect {
+                    emit(&this.on_disconnect_portable, device.clone());
+                } else {
+                    emit(&this.on_open_portable, device.clone());
+                }
+            });
+            actions.add_action(&action);
+        }
+        row.insert_action_group("portable", Some(&actions));
+        attach_menu_gesture(row, menu);
+    }
+
     /// Right-click on a cloud account: disconnect, or remove it entirely.
     fn attach_cloud_menu(self: &Rc<Self>, row: &gtk::ListBoxRow, account: &crate::fs::cloud::Account) {
         let menu = gio::Menu::new();
@@ -568,6 +653,9 @@ impl Sidebar {
             }
             Some(Target::AddCloud) => {
                 emit_unit(&self.on_add_cloud);
+            }
+            Some(Target::Portable(device)) => {
+                emit(&self.on_open_portable, *device);
             }
             Some(Target::Server(server)) => {
                 emit(&self.on_open_server, *server);

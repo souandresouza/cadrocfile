@@ -51,9 +51,10 @@ prebuilt binary — or builds from source if a binary won't run here.
 > Older, musl, or non-x86_64 builds from source instead.
 
 The installer also pulls the optional pieces each feature needs: `gvfs` and
-`gvfs-smb` for network shares, `rclone` and `fuse3` for cloud drives, `ntfs-3g`
-for NTFS repair, and `pigz` for fast `.tar.gz`. Everything else still works
-without them, and the app says which one is missing rather than failing quietly.
+`gvfs-smb` for network shares, `gvfs-mtp`/`gvfs-afc`/`gvfs-gphoto2` for phones
+and cameras, `rclone` and `fuse3` for cloud drives, `ntfs-3g` for NTFS repair,
+and `pigz` for fast `.tar.gz`. Everything else still works without them, and the
+app says which one is missing rather than failing quietly.
 
 Options go after `-s --`, since the script is piped into `sh`:
 
@@ -93,7 +94,8 @@ install -Dm755 cadrocfile ~/.local/bin/cadrocfile
 
 Runtime needs `gtk4`, `libadwaita`, `libarchive`, `udisks2` and a polkit agent.
 Optional: `pigz` (threaded `.tar.gz`), `ntfs-3g` (dirty NTFS), `ntfsprogs`
-(`ntfsfix`, repairs them properly).
+(`ntfsfix`, repairs them properly), `gvfs-mtp` / `gvfs-afc` / `gvfs-gphoto2`
+(Android phones, iPhones, cameras).
 
 </details>
 
@@ -127,6 +129,14 @@ stays on one disk, and counts hard links once — the way `du -x` does.
 into Removable, Windows and internal. Mounts through UDisks2 as your own user:
 no `sudo`, no fstab, no `/dev/sdX` that breaks on replug. LUKS volumes prompt for
 a passphrase and unlock.
+
+**Phones and cameras** — Android phones over MTP, iPhones over AFC and cameras in
+PTP mode appear under **Portable devices** as soon as they are plugged in.
+Clicking mounts them through gvfs, so their storage is an ordinary folder: copy,
+search, compress and preview all work. Unlocking the phone is what authorizes the
+connection; Cadrocfile asks for it when the mount fails instead of silently
+showing nothing. Needs `gvfs-mtp`, `gvfs-afc` or `gvfs-gphoto2` for the matching
+device.
 
 **NTFS that Windows left dirty** — with Fast Startup on, that's *every* normal
 shutdown. Most file managers show you the driver error and stop. Cadrocfile offers

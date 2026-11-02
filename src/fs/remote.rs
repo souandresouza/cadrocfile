@@ -375,14 +375,14 @@ pub async fn unmount(uri: &str) -> Result<(), String> {
     // is done synchronously; only the unmount itself can take real time.
     let mount = file
         .find_enclosing_mount(gio::Cancellable::NONE)
-        .map_err(|_| "That share is not mounted any more.".to_string())?;
+        .map_err(|_| "That location is not mounted any more.".to_string())?;
 
     mount
         .unmount_with_operation_future(gio::MountUnmountFlags::NONE, gio::MountOperation::NONE)
         .await
         .map_err(|e| {
             if e.matches(gio::IOErrorEnum::Busy) {
-                "Something is still using that share. Close it and try again.".to_string()
+                "Something is still using it. Close it and try again.".to_string()
             } else {
                 e.message().to_string()
             }
