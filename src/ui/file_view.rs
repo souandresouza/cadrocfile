@@ -596,7 +596,12 @@ impl FileView {
 
     fn attach_drag_source(self: &Rc<Self>, widget: &gtk::Widget) {
         let source = gtk::DragSource::new();
-        source.set_actions(gdk::DragAction::COPY | gdk::DragAction::MOVE);
+        // Copy only. Advertising MOVE would promise a destination that it may
+        // delete the source, and only `drag-end` is told whether it did — which
+        // nothing here handles, so an external move would leave the original
+        // behind. Dragging within the app is unaffected: `drop_files` decides
+        // move vs. copy from the filesystem, not from this action.
+        source.set_actions(gdk::DragAction::COPY);
 
         let weak = Rc::downgrade(self);
         let source_widget = widget.clone();
