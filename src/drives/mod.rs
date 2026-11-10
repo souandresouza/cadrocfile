@@ -799,6 +799,24 @@ fn classify_mount_error(raw: &str, volume: &Volume) -> MountError {
         ));
     }
 
+    // No driver in the running kernel means no amount of retrying or repair
+    // will help, so this must not fall through to a recovery dialog. The usual
+    // cause is a kernel update that removed the modules of the kernel still
+    // running: the new ones are on disk, but only a restart can load them.
+    if lower.contains("not configured in kernel") {
+        let fstype = if volume.fstype.is_empty() {
+            "this filesystem".to_string()
+        } else {
+            format!("“{}”", volume.fstype)
+        };
+        return MountError::Other(format!(
+            "The kernel running now has no driver for {fstype}, so the drive cannot be \
+             mounted.\n\nThis almost always means a kernel update is waiting for a restart: \
+             installing a new kernel removes the modules of the old one, and the old one stays \
+             in memory until the computer restarts. Restart and try again.\n\n{raw}"
+        ));
+    }
+
     if volume.is_ntfs() || lower.contains("ntfs") {
         // Hibernation needs a stronger warning, because clearing it discards a
         // saved Windows session rather than just a dirty bit.
@@ -1104,6 +1122,31 @@ mod error_tests {
             can_power_off: true,
             is_encrypted: false,
         }
+    }
+
+    /// A kernel with no driver for the filesystem cannot be fixed by any of the
+    /// recovery options the NTFS path would offer; the message has to say that
+    /// a restart is what is missing.
+    #[test]
+    fn a_missing_kernel_driver_is_explained_as_a_pending_restart() {
+        let volume = Volume { fstype: "exfat".into(), ..ntfs_volume() };
+        let raw = "GDBus.Error:org.freedesktop.UDisks2.Error.Failed: Error mounting /dev/sdc1 \
+                   at /run/media/ana/7AAC-B339: Filesystem type exfat not configured in kernel.";
+        match classify_mount_error(raw, &volume) {
+            MountError::Other(message) => {
+                assert!(message.contains("no driver for “exfat”"), "{message}");
+                assert!(message.contains("Restart and try again"), "{message}");
+            }
+            other => panic!("expected a plain error, got {other:?}"),
+        }
+    }
+
+    /// The missing-driver case outranks the NTFS heuristics: an NTFS volume
+    /// whose module is not loaded is not a dirty volume.
+    #[test]
+    fn a_missing_driver_on_ntfs_is_not_treated_as_a_dirty_volume() {
+        let raw = "Filesystem type ntfs3 not configured in kernel.";
+        assert!(matches!(classify_mount_error(raw, &ntfs_volume()), MountError::Other(_)));
     }
 
     /// The generic kernel refusal really is a dirty volume, and every option
