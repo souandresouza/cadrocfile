@@ -441,14 +441,20 @@ impl FileView {
             });
         }
 
+        // Rubber-band selection must be installed *before* the drag source.
+        // Controllers added later run first, and the view's rubber-band gesture
+        // claims the sequence as soon as the pointer passes the drag threshold.
+        // With the drag source last, it gets first refusal and can take over
+        // when the press landed on a file; on blank space it declines and the
+        // rubber band still gets its turn.
+        self.grid.set_enable_rubberband(true);
+        self.columns.set_enable_rubberband(true);
+
         for widget in [self.grid.upcast_ref::<gtk::Widget>(), self.columns.upcast_ref::<gtk::Widget>()] {
             self.attach_context_menu(widget);
             self.attach_drag_source(widget);
             self.attach_drop_target(widget);
         }
-
-        self.grid.set_enable_rubberband(true);
-        self.columns.set_enable_rubberband(true);
 
         for widget in [self.grid.upcast_ref::<gtk::Widget>(), self.columns.upcast_ref::<gtk::Widget>()] {
             self.attach_empty_click(widget);
@@ -593,12 +599,23 @@ impl FileView {
         source.set_actions(gdk::DragAction::COPY | gdk::DragAction::MOVE);
 
         let weak = Rc::downgrade(self);
-        source.connect_prepare(move |_, _, _| {
+        let source_widget = widget.clone();
+        source.connect_prepare(move |_, x, y| {
             let this = weak.upgrade()?;
-            let paths = this.selected_paths();
-            if paths.is_empty() {
-                return None;
+
+            // A press on an unselected item does not update the selection until
+            // release, so `selected_paths()` alone can be empty or name the
+            // wrong files. The item under the press is what the user grabbed.
+            let dragged = this.item_at(&source_widget, x, y).map(|obj| obj.path());
+            let mut paths = this.selected_paths();
+            match dragged {
+                // Blank space: decline the drag so rubber-band selection can
+                // have the gesture instead.
+                None => return None,
+                Some(path) if !paths.contains(&path) => paths = vec![path],
+                Some(_) => {}
             }
+
             let files: Vec<gio::File> = paths.iter().map(gio::File::for_path).collect();
             Some(gdk::ContentProvider::for_value(&gdk::FileList::from_array(&files).to_value()))
         });
