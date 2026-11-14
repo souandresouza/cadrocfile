@@ -56,7 +56,7 @@ fn kind_of(entry: &FileEntry) -> Kind {
     }
     let ct = entry.content_type.as_str();
     let is_a = |parent: &str| gio::functions::content_type_is_a(ct, parent);
-    if ct.starts_with("image/") {
+    if ct.starts_with("image/") || crate::fs::raw::is_raw(&entry.path) {
         Kind::Image
     } else if ct.starts_with("video/") || is_a("video/*") {
         Kind::Video
@@ -336,6 +336,9 @@ impl Preview {
                     if kind == Kind::Document {
                         this.set_note(Some("First page. Press Enter to open the whole document."));
                     }
+                    if kind == Kind::Image {
+                        show_exif_note(&this, &entry, generation);
+                    }
                 }
                 None => {
                     this.body.set_child(Some(&info_card(&entry, Some("This file could not be rendered."))));
@@ -417,7 +420,8 @@ impl Preview {
             }
             match text {
                 Some((text, truncated)) => {
-                    this.body.set_child(Some(&text_view(&text)));
+                    let path = entry.path.clone();
+                    this.body.set_child(Some(&text_view(&text, &path)));
                     if truncated {
                         this.set_note(Some("Showing the first 512 KB."));
                     }
@@ -451,6 +455,29 @@ impl Preview {
             this.body.set_child(Some(&info_card(&entry, Some(&line))));
         });
     }
+}
+
+/// Fills the note line with the camera's summary once EXIF has been read.
+///
+/// Read on a worker because the photo may be on a network mount; the note is a
+/// bonus, so a slow or missing answer simply leaves it hidden.
+fn show_exif_note(this: &Rc<Preview>, entry: &FileEntry, generation: u64) {
+    let (tx, rx) = async_channel::bounded(1);
+    let path = entry.path.clone();
+    std::thread::Builder::new()
+        .name("cadrocfile-exif".into())
+        .spawn(move || {
+            let _ = tx.send_blocking(crate::fs::exif::summary(&path));
+        })
+        .ok();
+    let weak = Rc::downgrade(this);
+    glib::spawn_future_local(async move {
+        let Ok(Some(summary)) = rx.recv().await else { return };
+        let Some(this) = weak.upgrade() else { return };
+        if this.is_current(generation) {
+            this.set_note(Some(&summary));
+        }
+    });
 }
 
 /// Reads the start of a file as text, or `None` if it is binary.
@@ -487,7 +514,7 @@ fn picture(texture: &gdk::Texture) -> gtk::Picture {
         .build()
 }
 
-fn text_view(text: &str) -> gtk::ScrolledWindow {
+fn text_view(text: &str, path: &Path) -> gtk::ScrolledWindow {
     let view = gtk::TextView::builder()
         .editable(false)
         .cursor_visible(false)
@@ -498,8 +525,230 @@ fn text_view(text: &str) -> gtk::ScrolledWindow {
         .left_margin(14)
         .right_margin(14)
         .build();
-    view.buffer().set_text(text);
+    let buffer = view.buffer();
+    buffer.set_text(text);
+    highlight(&buffer, text, path);
     gtk::ScrolledWindow::builder().child(&view).vexpand(true).build()
+}
+
+/// How much of a file is coloured in. Past this the spans outnumber the value.
+const MAX_HIGHLIGHT_CHARS: usize = 200_000;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Language {
+    Rust,
+    CLike,
+    Python,
+    Shell,
+    Json,
+    Toml,
+    Markdown,
+    Plain,
+}
+
+impl Language {
+    fn from_path(path: &Path) -> Self {
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        match extension.as_str() {
+            "rs" => Self::Rust,
+            "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "java" | "js" | "mjs" | "ts" | "tsx"
+            | "jsx" | "go" | "swift" | "kt" | "kts" | "cs" => Self::CLike,
+            "py" | "pyi" | "pyw" => Self::Python,
+            "sh" | "bash" | "zsh" | "fish" | "ksh" | "dash" => Self::Shell,
+            "json" | "jsonc" => Self::Json,
+            "toml" | "ini" | "cfg" | "conf" => Self::Toml,
+            "md" | "markdown" => Self::Markdown,
+            _ => Self::Plain,
+        }
+    }
+
+    fn line_comment(self) -> Option<&'static str> {
+        match self {
+            Self::Rust | Self::CLike => Some("//"),
+            Self::Python | Self::Shell | Self::Toml => Some("#"),
+            Self::Json | Self::Markdown | Self::Plain => None,
+        }
+    }
+
+    fn has_block_comments(self) -> bool {
+        matches!(self, Self::Rust | Self::CLike | Self::Toml)
+    }
+
+    fn keywords(self) -> &'static [&'static str] {
+        match self {
+            Self::Rust => &[
+                "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else",
+                "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match",
+                "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct",
+                "super", "trait", "true", "type", "unsafe", "use", "where", "while",
+            ],
+            Self::CLike => &[
+                "abstract", "async", "await", "boolean", "break", "case", "catch", "char", "class",
+                "const", "continue", "def", "default", "do", "double", "else", "enum", "extends",
+                "false", "final", "finally", "float", "for", "foreach", "func", "function", "if",
+                "implements", "import", "in", "int", "interface", "let", "long", "namespace",
+                "new", "null", "package", "private", "protected", "public", "return", "short",
+                "static", "struct", "switch", "this", "throw", "throws", "true", "try", "typedef",
+                "typeof", "union", "unsigned", "var", "virtual", "void", "volatile", "while",
+            ],
+            Self::Python => &[
+                "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+                "elif", "else", "except", "False", "finally", "for", "from", "global", "if",
+                "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise",
+                "return", "True", "try", "while", "with", "yield",
+            ],
+            Self::Shell => &[
+                "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function",
+                "if", "in", "local", "readonly", "return", "select", "set", "then", "until",
+                "while",
+            ],
+            Self::Json => &["false", "null", "true"],
+            Self::Toml => &["false", "true"],
+            Self::Markdown | Self::Plain => &[],
+        }
+    }
+}
+
+/// Colours strings, comments, numbers and keywords in the preview.
+///
+/// Deliberately a scanner rather than a parser: it runs on text that may be
+/// half a megabyte of anything, and being wrong about one token's colour costs
+/// nothing. Keywords and punctuation come from a per-language list, which is
+/// enough for a preview without a grammar for every language in existence.
+fn highlight(buffer: &gtk::TextBuffer, text: &str, path: &Path) {
+    let language = Language::from_path(path);
+    if language == Language::Plain {
+        return;
+    }
+
+    let dark = adw::StyleManager::default().is_dark();
+    let (keyword, string, comment, number, heading) = if dark {
+        ("#c678dd", "#98c379", "#7f848e", "#d19a66", "#61afef")
+    } else {
+        ("#a626a4", "#50a14f", "#a0a1a7", "#986801", "#4078f2")
+    };
+    for (name, colour) in [
+        ("syntax-keyword", keyword),
+        ("syntax-string", string),
+        ("syntax-comment", comment),
+        ("syntax-number", number),
+        ("syntax-heading", heading),
+    ] {
+        let tag = gtk::TextTag::builder().name(name).foreground(colour).build();
+        buffer.tag_table().add(&tag);
+    }
+
+    let chars: Vec<char> = text.chars().take(MAX_HIGHLIGHT_CHARS).collect();
+    let keywords = language.keywords();
+    let mut index = 0;
+
+    while index < chars.len() {
+        let at_line_start = index == 0 || chars[index - 1] == '\n';
+
+        if language == Language::Markdown && at_line_start && chars[index] == '#' {
+            let start = index;
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            tag_span(buffer, "syntax-heading", start, index);
+            continue;
+        }
+
+        if let Some(marker) = language.line_comment()
+            && starts_with(&chars, index, marker)
+        {
+            let start = index;
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            tag_span(buffer, "syntax-comment", start, index);
+            continue;
+        }
+
+        if language.has_block_comments() && starts_with(&chars, index, "/*") {
+            let start = index;
+            index += 2;
+            while index < chars.len() && !starts_with(&chars, index, "*/") {
+                index += 1;
+            }
+            index = (index + 2).min(chars.len());
+            tag_span(buffer, "syntax-comment", start, index);
+            continue;
+        }
+
+        let character = chars[index];
+        if character == '"' || character == '\'' || (language == Language::Markdown && character == '`')
+        {
+            let quote = character;
+            // Python's triple-quoted string, and nothing else, spans lines.
+            let triple = language == Language::Python
+                && starts_with(&chars, index, &quote.to_string().repeat(3));
+            let start = index;
+            index += if triple { 3 } else { 1 };
+            while index < chars.len() {
+                if chars[index] == '\\' && !triple {
+                    index += 2;
+                    continue;
+                }
+                if triple && starts_with(&chars, index, &quote.to_string().repeat(3)) {
+                    index += 3;
+                    break;
+                }
+                if !triple && chars[index] == quote {
+                    index += 1;
+                    break;
+                }
+                if !triple && chars[index] == '\n' {
+                    break;
+                }
+                index += 1;
+            }
+            tag_span(buffer, "syntax-string", start, index.min(chars.len()));
+            continue;
+        }
+
+        if character.is_ascii_digit() {
+            let start = index;
+            while index < chars.len()
+                && (chars[index].is_ascii_alphanumeric() || chars[index] == '.' || chars[index] == '_')
+            {
+                index += 1;
+            }
+            tag_span(buffer, "syntax-number", start, index);
+            continue;
+        }
+
+        if character.is_alphabetic() || character == '_' {
+            let start = index;
+            while index < chars.len() && (chars[index].is_alphanumeric() || chars[index] == '_') {
+                index += 1;
+            }
+            let word: String = chars[start..index].iter().collect();
+            if keywords.contains(&word.as_str()) {
+                tag_span(buffer, "syntax-keyword", start, index);
+            }
+            continue;
+        }
+
+        index += 1;
+    }
+}
+
+fn starts_with(chars: &[char], at: usize, needle: &str) -> bool {
+    needle.chars().enumerate().all(|(offset, wanted)| chars.get(at + offset) == Some(&wanted))
+}
+
+fn tag_span(buffer: &gtk::TextBuffer, name: &str, from: usize, to: usize) {
+    if to <= from || from > i32::MAX as usize || to > i32::MAX as usize {
+        return;
+    }
+    let start = buffer.iter_at_offset(from as i32);
+    let end = buffer.iter_at_offset(to as i32);
+    buffer.apply_tag_by_name(name, &start, &end);
 }
 
 /// A large icon with the file's name and details, for anything not rendered.

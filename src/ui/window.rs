@@ -15,7 +15,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 use crate::{
-    config::{Config, Theme, ViewMode},
+    config::{Config, Session, TabState, Theme, ViewMode},
     drives::Volume,
     fs::{FileEntry, scan},
     history::History,
@@ -169,6 +169,10 @@ pub struct Window {
     /// Built on first use and then kept, so reopening it is instant.
     pub(crate) preview: RefCell<Option<Rc<crate::ui::preview::Preview>>>,
     pub(crate) usage: RefCell<Option<Rc<crate::ui::usage::UsageWindow>>>,
+    /// The command palette while it is on screen, and whether it is open.
+    /// Kept so `Ctrl+K` can close it as well as open it.
+    pub(crate) palette: RefCell<Option<adw::Dialog>>,
+    pub(crate) palette_open: Cell<bool>,
 }
 
 /// The banner is shared between unrelated states, so its button needs to know
@@ -183,8 +187,21 @@ pub enum BannerAction {
 }
 
 impl Window {
-    pub fn new(app: &adw::Application, config: Config, start: PathBuf) -> Rc<Self> {
+    pub fn new(app: &adw::Application, config: Config, start: Option<PathBuf>) -> Rc<Self> {
         let config = Rc::new(RefCell::new(config));
+
+        // Restoring is only for a plain launch: an explicit path on the command
+        // line means "open this folder", and a second window should not
+        // duplicate every tab the first one already has.
+        let session = config.borrow().session.clone();
+        let restore = start.is_none() && app.windows().is_empty() && !session.tabs.is_empty();
+
+        let first_state = restore.then(|| session.tabs[0].clone());
+        let start = first_state
+            .as_ref()
+            .map(|state| state.path.clone())
+            .or(start)
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")));
 
         let window = adw::ApplicationWindow::builder()
             .application(app)
@@ -197,6 +214,11 @@ impl Window {
         }
 
         let first_tab = Tab::new(&config, start.clone());
+        if let Some(state) = &first_state
+            && let Some(history) = History::restore(state.history.clone(), state.position)
+        {
+            *first_tab.history.borrow_mut() = history;
+        }
 
         // `autohide` keeps the strip out of the way until there is more than
         // one tab, so nothing about the single-tab window changes.
@@ -390,6 +412,8 @@ impl Window {
             context_menu,
             preview: RefCell::new(None),
             usage: RefCell::new(None),
+            palette: RefCell::new(None),
+            palette_open: Cell::new(false),
         });
 
         this.apply_theme();
@@ -405,7 +429,21 @@ impl Window {
         // Runs rclone, so it happens off-thread and fills the section in once
         // the window is already up.
         this.refresh_cloud();
-        this.navigate_to(Location::Directory(start), false);
+        if restore {
+            this.navigate_to(Location::Directory(start.clone()), false);
+            for state in session.tabs.iter().skip(1) {
+                this.open_in_new_tab(Location::Directory(state.path.clone()));
+                if let Some(tab) = this.tabs.borrow().last()
+                    && let Some(history) = History::restore(state.history.clone(), state.position)
+                {
+                    *tab.history.borrow_mut() = history;
+                }
+            }
+            let active = session.active.min(session.tabs.len().saturating_sub(1));
+            this.tab_view.set_selected_page(&this.tab_view.nth_page(active as i32));
+        } else {
+            this.navigate_to(Location::Directory(start), false);
+        }
 
         this
     }
@@ -694,7 +732,10 @@ impl Window {
                     cfg.window_height = window.default_height();
                 }
                 cfg.sidebar_visible = this.split.shows_sidebar();
-                let _ = cfg.save();
+            }
+            this.capture_session();
+            if let Err(err) = this.config.borrow().save() {
+                eprintln!("cadrocfile: could not save settings: {err}");
             }
             glib::Propagation::Proceed
         });
@@ -1512,6 +1553,31 @@ impl Window {
         self.schedule_save();
     }
 
+    /// Records the open tabs and where each one is, ready to be saved.
+    ///
+    /// Virtual locations (Trash, Recent) are skipped: they are not paths, and
+    /// reopening the app in the Trash would be a strange way to start. The
+    /// active index is the position within what was actually saved.
+    pub(crate) fn capture_session(&self) {
+        let selected = self.tab_view.selected_page();
+        let mut tabs: Vec<TabState> = Vec::new();
+        let mut active = 0;
+
+        for tab in self.tabs.borrow().iter() {
+            let Location::Directory(path) = &*tab.location.borrow() else { continue };
+            if selected
+                .as_ref()
+                .is_some_and(|page| tab.view.widget().upcast_ref::<gtk::Widget>() == &page.child())
+            {
+                active = tabs.len();
+            }
+            let (history, position) = tab.history.borrow().snapshot();
+            tabs.push(TabState { path: path.clone(), history, position });
+        }
+
+        self.config.borrow_mut().session = Session { tabs, active };
+    }
+
     /// Writes the config a moment after the last change, so rapid adjustments
     /// (a zoom held down, a window drag) cost one write rather than dozens.
     pub(crate) fn schedule_save(self: &Rc<Self>) {
@@ -1522,6 +1588,7 @@ impl Window {
         let id = glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || {
             let Some(this) = weak.upgrade() else { return };
             *this.save_timer.borrow_mut() = None;
+            this.capture_session();
             if let Err(err) = this.config.borrow().save() {
                 eprintln!("cadrocfile: could not save settings: {err}");
             }
@@ -1880,6 +1947,7 @@ fn build_main_menu() -> gio::Menu {
     menu.append_submenu(Some(tr!("Appearance")), &theme);
 
     let app = gio::Menu::new();
+    app.append(Some("Command Palette"), Some("win.command-palette"));
     app.append(Some("Preferences"), Some("win.preferences"));
     app.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
     app.append(Some(tr!("About Cadrocfile")), Some("win.about"));

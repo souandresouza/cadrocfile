@@ -58,6 +58,32 @@ impl SortKey {
 pub const ICON_SIZES: [i32; 6] = [16, 24, 32, 48, 64, 96];
 pub const DEFAULT_ICON_SIZE: i32 = 48;
 
+/// One tab as remembered between launches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TabState {
+    pub path: PathBuf,
+    /// Where back and forward can still take this tab.
+    pub history: Vec<PathBuf>,
+    /// Index of `path` within `history`.
+    pub position: usize,
+}
+
+impl Default for TabState {
+    fn default() -> Self {
+        Self { path: PathBuf::new(), history: Vec::new(), position: 0 }
+    }
+}
+
+/// The tabs to reopen on the next launch.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Session {
+    pub tabs: Vec<TabState>,
+    /// Index of the tab that was in front.
+    pub active: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -96,6 +122,11 @@ pub struct Config {
     pub window_height: i32,
     pub window_maximized: bool,
     pub sidebar_visible: bool,
+    /// The tabs that were open at the last quit.
+    pub session: Session,
+    /// Action names of the last commands run from the palette, most recent
+    /// first. Only a convenience, so it is silently dropped if it grows odd.
+    pub recent_commands: Vec<String>,
 }
 
 impl Default for Config {
@@ -122,6 +153,8 @@ impl Default for Config {
             window_height: 760,
             window_maximized: false,
             sidebar_visible: true,
+            session: Session::default(),
+            recent_commands: Vec::new(),
         }
     }
 }
@@ -214,6 +247,19 @@ impl Config {
             .collect();
         self.favourites.retain(|p| p.is_absolute());
         self.favourites.dedup();
+
+        // A saved session is a convenience, so anything unusable is dropped
+        // rather than allowed to block startup: a hand-edited relative path, a
+        // folder on a drive that is no longer mounted, or an absurd tab count.
+        self.session.tabs.retain_mut(|tab| {
+            let Some(expanded) = expand_home(&tab.path) else { return false };
+            tab.path = expanded;
+            tab.path.is_absolute()
+        });
+        self.session.tabs.truncate(24);
+        self.session.active = self.session.active.min(self.session.tabs.len().saturating_sub(1));
+        self.recent_commands.truncate(8);
+        self.recent_commands.dedup();
     }
 
     /// Writes atomically: a crash mid-write leaves the previous config intact
@@ -288,6 +334,25 @@ mod tests {
         for input in ["/usr/share", "/", "relative/dir", "..", "~user/x"] {
             assert_eq!(expand_home(Path::new(input)), Some(PathBuf::from(input)));
         }
+    }
+
+    #[test]
+    fn session_drops_unusable_tabs_and_clamps_the_active_index() {
+        let mut cfg = Config::default();
+        cfg.session.tabs = vec![
+            TabState { path: PathBuf::from("/tmp"), history: Vec::new(), position: 0 },
+            TabState {
+                path: PathBuf::from("nao/absoluto"),
+                history: Vec::new(),
+                position: 0,
+            },
+        ];
+        cfg.session.active = 9;
+        cfg.sanitize();
+
+        assert_eq!(cfg.session.tabs.len(), 1);
+        assert_eq!(cfg.session.tabs[0].path, PathBuf::from("/tmp"));
+        assert_eq!(cfg.session.active, 0);
     }
 
     #[test]

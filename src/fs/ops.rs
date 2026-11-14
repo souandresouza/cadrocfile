@@ -18,6 +18,8 @@ use std::{
     },
 };
 
+use super::sidecar;
+
 /// Chunk size for the progress-reporting copy loop.
 const COPY_BUF: usize = 1024 * 1024;
 
@@ -124,6 +126,9 @@ struct Job {
     blanket: Option<ConflictChoice>,
     errors: Vec<(PathBuf, String)>,
     created: Vec<PathBuf>,
+    /// Items the user chose to skip, so a move can leave the whole source in
+    /// place instead of deleting the files it just declined to copy.
+    skips: u64,
     /// Throttles `Bytes` messages so a fast copy doesn't flood the channel.
     last_report: u64,
     /// Throttles `Item` messages for the same reason.
@@ -317,6 +322,47 @@ fn copy_metadata(src: &Path, dest: &Path) {
     }
 }
 
+/// Copies the sidecars of a photo next to the copy of the photo itself.
+///
+/// Directories need no help: a sidecar inside the tree is an ordinary file and
+/// the recursive copy already carries it along.
+fn copy_companions(job: &mut Job, src: &Path, dest: &Path) {
+    if src.is_dir() {
+        return;
+    }
+    for sidecar in sidecar::companions(src) {
+        let target = sidecar::destination_for(&sidecar, src, dest);
+        if target == sidecar {
+            continue;
+        }
+        if let Err(e) = fs::copy(&sidecar, &target) {
+            job.fail(&sidecar, e);
+        }
+    }
+}
+
+/// Moves the sidecars after the photo itself was renamed.
+fn move_companions(job: &mut Job, src: &Path, dest: &Path) {
+    if src.is_dir() {
+        return;
+    }
+    for (sidecar, error) in sidecar::rename_with(src, dest) {
+        job.fail(&sidecar, error);
+    }
+}
+
+/// Removes the sidecars left behind by a move that had to copy and delete.
+fn remove_companions(job: &mut Job, src: &Path) {
+    if src.is_dir() {
+        return;
+    }
+    for sidecar in sidecar::companions(src) {
+        if let Err(e) = fs::remove_file(&sidecar) {
+            job.fail(&sidecar, e);
+        }
+    }
+}
+
 /// Recursively copies `src` to `dest`, resolving conflicts as it goes.
 fn copy_recursive(job: &mut Job, src: &Path, dest: &Path, top_level: bool) {
     if job.cancelled() {
@@ -335,7 +381,12 @@ fn copy_recursive(job: &mut Job, src: &Path, dest: &Path, top_level: bool) {
         let both_dirs = md.is_dir() && dest.is_dir();
         if !both_dirs {
             match job.resolve_conflict(src, &dest) {
-                ConflictChoice::Skip | ConflictChoice::SkipAll => return,
+                ConflictChoice::Skip | ConflictChoice::SkipAll => {
+                    // The source stays; `start_transfer` checks this so a move
+                    // does not remove a file the user asked to skip.
+                    job.skips += 1;
+                    return;
+                }
                 ConflictChoice::Cancel => {
                     job.cancel.store(true, AtomicOrdering::Relaxed);
                     return;
@@ -424,6 +475,7 @@ pub fn start_transfer(sources: Vec<PathBuf>, dest_dir: PathBuf, is_move: bool) -
                 blanket: None,
                 errors: Vec::new(),
                 created: Vec::new(),
+                skips: 0,
                 last_report: 0,
                 last_item: Instant::now(),
             };
@@ -448,7 +500,8 @@ pub fn start_transfer(sources: Vec<PathBuf>, dest_dir: PathBuf, is_move: bool) -
                 if is_move {
                     match try_rename(&mut job, src, &dest) {
                         RenameResult::Done(final_dest) => {
-                            job.created.push(final_dest);
+                            job.created.push(final_dest.clone());
+                            move_companions(&mut job, src, &final_dest);
                             job.item(|| name.to_string_lossy().into_owned());
                             // A rename moves every byte at once; credit them so
                             // the bar reflects work actually completed.
@@ -462,9 +515,17 @@ pub fn start_transfer(sources: Vec<PathBuf>, dest_dir: PathBuf, is_move: bool) -
                     }
                 }
 
+                let created_before = job.created.len();
+                let skips_before = job.skips;
                 copy_recursive(&mut job, src, &dest, true);
+                if let Some(final_dest) = job.created.get(created_before).cloned()
+                    && !src.is_dir()
+                {
+                    copy_companions(&mut job, src, &final_dest);
+                }
 
-                if is_move && !job.cancelled() {
+                if is_move && !job.cancelled() && job.skips == skips_before {
+                    remove_companions(&mut job, src);
                     let removed = if src.is_dir() {
                         fs::remove_dir_all(src)
                     } else {
@@ -625,6 +686,7 @@ pub fn start_delete(paths: Vec<PathBuf>, permanent: bool) -> JobHandle {
                 blanket: None,
                 errors: Vec::new(),
                 created: Vec::new(),
+                skips: 0,
                 last_report: 0,
                 last_item: Instant::now(),
             };
@@ -684,6 +746,10 @@ pub fn rename_in_place(path: &Path, new_name: &str) -> Result<PathBuf, String> {
         return Err(format!("“{trimmed}” already exists here"));
     }
     fs::rename(path, &dest).map_err(|e| e.to_string())?;
+    // The photo is already at its new name; a sidecar that refuses to follow
+    // is reported by the batch path, and here would only turn a successful
+    // rename into an error after the fact.
+    let _ = sidecar::rename_with(path, &dest);
     Ok(dest)
 }
 
@@ -866,6 +932,70 @@ mod tests {
 
         assert!(outcome.errors.is_empty(), "unexpected errors: {:?}", outcome.errors);
         assert!(!victim.exists());
+    }
+
+    #[test]
+    fn moving_a_photo_takes_its_sidecar() {
+        let root = tempdir();
+        let src = root.join("src");
+        let dest = root.join("dest");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(src.join("IMG_1.ORF"), b"sensor").unwrap();
+        fs::write(src.join("IMG_1.ORF.xmp"), b"edits").unwrap();
+
+        let outcome =
+            drain(start_transfer(vec![src.join("IMG_1.ORF")], dest.clone(), true), ConflictChoice::Skip);
+
+        assert!(outcome.errors.is_empty(), "unexpected errors: {:?}", outcome.errors);
+        assert!(dest.join("IMG_1.ORF").exists());
+        assert_eq!(fs::read(dest.join("IMG_1.ORF.xmp")).unwrap(), b"edits");
+        assert!(!src.join("IMG_1.ORF.xmp").exists());
+    }
+
+    #[test]
+    fn copying_a_photo_copies_its_sidecar_and_a_renamed_copy_renames_it_too() {
+        let root = tempdir();
+        let src = root.join("src");
+        let dest = root.join("dest");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(src.join("A.CR2"), b"new").unwrap();
+        fs::write(src.join("A.CR2.xmp"), b"new edits").unwrap();
+        fs::write(dest.join("A.CR2"), b"old").unwrap();
+        fs::write(dest.join("A.CR2.xmp"), b"old edits").unwrap();
+
+        let outcome = drain(
+            start_transfer(vec![src.join("A.CR2")], dest.clone(), false),
+            ConflictChoice::Rename,
+        );
+
+        assert!(outcome.errors.is_empty(), "unexpected errors: {:?}", outcome.errors);
+        assert_eq!(fs::read(dest.join("A (copy).CR2")).unwrap(), b"new");
+        assert_eq!(fs::read(dest.join("A (copy).CR2.xmp")).unwrap(), b"new edits");
+        // The original pair is untouched.
+        assert_eq!(fs::read(dest.join("A.CR2.xmp")).unwrap(), b"old edits");
+    }
+
+    #[test]
+    fn skipping_a_move_conflict_keeps_the_source_photo_and_sidecar() {
+        let root = tempdir();
+        let src = root.join("src");
+        let dest = root.join("dest");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(src.join("dup.txt"), b"new").unwrap();
+        fs::write(src.join("dup.txt.xmp"), b"edits").unwrap();
+        fs::write(dest.join("dup.txt"), b"old").unwrap();
+
+        drain(
+            start_transfer(vec![src.join("dup.txt")], dest.clone(), true),
+            ConflictChoice::Skip,
+        );
+
+        assert_eq!(fs::read(dest.join("dup.txt")).unwrap(), b"old");
+        assert_eq!(fs::read(src.join("dup.txt")).unwrap(), b"new");
+        assert_eq!(fs::read(src.join("dup.txt.xmp")).unwrap(), b"edits");
     }
 
     fn tempdir() -> TempDir {

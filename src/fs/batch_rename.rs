@@ -288,6 +288,12 @@ pub fn execute(plan: &[Planned]) -> Result<Vec<PathBuf>, String> {
             ));
         }
     }
+    // Photos are in their final names; let their sidecars follow. A failure
+    // here leaves a sidecar under its old name rather than losing it, so it is
+    // not worth turning a completed rename into an error.
+    let moves: Vec<(PathBuf, PathBuf)> =
+        moving.iter().map(|item| (item.from.clone(), item.to.clone())).collect();
+    let _ = super::sidecar::rename_many(&moves);
     Ok(moving.iter().map(|p| p.to.clone()).collect())
 }
 

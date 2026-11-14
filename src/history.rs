@@ -20,6 +20,30 @@ impl History {
         Self { entries: vec![start], index: 0 }
     }
 
+    /// The remembered entries and the current index, for saving a session.
+    pub fn snapshot(&self) -> (Vec<PathBuf>, usize) {
+        (self.entries.clone(), self.index)
+    }
+
+    /// Rebuilds a history from a saved snapshot, rejecting anything that could
+    /// index out of bounds.
+    ///
+    /// Working backwards from a browser history is useful enough to save, but
+    /// it is not worth refusing to open a tab over: a broken snapshot yields
+    /// `None` and the caller starts a fresh history instead.
+    pub fn restore(entries: Vec<PathBuf>, index: usize) -> Option<Self> {
+        let mut entries = entries;
+        if entries.is_empty() {
+            return None;
+        }
+        if entries.len() > MAX_ENTRIES {
+            let drop_count = entries.len() - MAX_ENTRIES;
+            entries.drain(..drop_count);
+        }
+        let index = index.min(entries.len() - 1);
+        Some(Self { entries, index })
+    }
+
     pub fn current(&self) -> &Path {
         &self.entries[self.index]
     }
@@ -118,6 +142,21 @@ mod tests {
         let mut h = History::new(PathBuf::from("/a"));
         h.push(PathBuf::from("/a"));
         assert!(!h.can_go_back());
+    }
+
+    #[test]
+    fn a_saved_history_round_trips_and_a_bad_index_is_clamped() {
+        let mut h = History::new(PathBuf::from("/a"));
+        h.push(PathBuf::from("/b"));
+        h.push(PathBuf::from("/c"));
+        let (entries, index) = h.snapshot();
+        let restored = History::restore(entries, index).expect("snapshot restores");
+        assert_eq!(restored.current(), Path::new("/c"));
+        assert!(restored.can_go_back());
+
+        let clamped = History::restore(vec![PathBuf::from("/x")], 99).unwrap();
+        assert_eq!(clamped.current(), Path::new("/x"));
+        assert!(History::restore(Vec::new(), 0).is_none());
     }
 
     #[test]

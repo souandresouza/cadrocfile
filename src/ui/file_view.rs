@@ -1194,7 +1194,12 @@ fn apply_icon(
 
     image.set_from_gicon(&thumbs::icon_for(&entry.content_type, entry.is_dir, entry.is_symlink));
 
-    if !want_thumbs || entry.is_dir || !thumbs::worth_thumbnailing(&entry.content_type, entry.size, max_bytes) {
+    if !want_thumbs || entry.is_dir {
+        return;
+    }
+    let thumbnailable = crate::fs::raw::is_raw(&entry.path)
+        || thumbs::worth_thumbnailing(&entry.content_type, entry.size, max_bytes);
+    if !thumbnailable {
         return;
     }
 

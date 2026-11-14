@@ -23,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use gtk::{gdk, prelude::*};
+use gtk::{gdk, gio, prelude::*};
 
 /// Cached textures, keyed by path plus the mtime and requested size, so an
 /// edited image or a zoom change re-renders instead of showing a stale bitmap.
@@ -249,7 +249,12 @@ async fn produce(
     // for types gdk-pixbuf never handles and for images whose loader is
     // missing (HEIF and AVIF, commonly), where the decode above just fails.
     let mut result = None;
-    if decodes_natively(content_type) {
+    if crate::fs::raw::is_raw(path) {
+        // The camera's own JPEG is both smaller and faster to read than the
+        // sensor data, and it already has the right white balance.
+        result = decode_raw_preview(path.to_path_buf(), Some(target)).await;
+    }
+    if result.is_none() && decodes_natively(content_type) {
         result = decode_on_worker(path.to_path_buf(), Some(target)).await;
     }
     if result.is_none()
@@ -337,6 +342,39 @@ async fn decode_on_worker(path: PathBuf, target: Option<i32>) -> Option<RawThumb
     rx.recv().await.ok().flatten()
 }
 
+/// Reads and decodes the JPEG preview a raw photo carries.
+///
+/// The extraction itself does disk I/O in proportion to the preview, so it gets
+/// its own thread like every other decode; the GUI thread never touches the
+/// file system here.
+async fn decode_raw_preview(path: PathBuf, target: Option<i32>) -> Option<RawThumb> {
+    let (tx, rx) = async_channel::bounded(1);
+
+    std::thread::Builder::new()
+        .name("cadrocfile-raw".into())
+        .spawn(move || {
+            let raw = crate::fs::raw::embedded_preview(&path).and_then(|jpeg| {
+                let bytes = glib::Bytes::from_owned(jpeg);
+                let stream = gio::MemoryInputStream::from_bytes(&bytes);
+                let decoded = match target {
+                    Some(size) => gdk_pixbuf::Pixbuf::from_stream_at_scale(
+                        &stream,
+                        size,
+                        size,
+                        true,
+                        gio::Cancellable::NONE,
+                    ),
+                    None => gdk_pixbuf::Pixbuf::from_stream(&stream, gio::Cancellable::NONE),
+                };
+                decoded.ok().map(upright).as_ref().map(RawThumb::from_pixbuf)
+            });
+            let _ = tx.send_blocking(raw);
+        })
+        .ok()?;
+
+    rx.recv().await.ok().flatten()
+}
+
 /// Turns a photo the way its camera says it was held.
 ///
 /// Phones store portrait shots as landscape pixels plus an EXIF orientation
@@ -353,7 +391,10 @@ fn upright(pixbuf: gdk_pixbuf::Pixbuf) -> gdk_pixbuf::Pixbuf {
 /// itself, so an image already within `max` is decoded as it is.
 pub async fn render_large(path: PathBuf, content_type: &str, max: i32) -> Option<gdk::Texture> {
     let mut raw = None;
-    if decodes_natively(content_type) {
+    if crate::fs::raw::is_raw(&path) {
+        raw = decode_raw_preview(path.clone(), Some(max)).await;
+    }
+    if raw.is_none() && decodes_natively(content_type) {
         let (tx, rx) = async_channel::bounded(1);
         let source = path.clone();
         std::thread::Builder::new()
@@ -548,5 +589,3 @@ pub fn icon_for(content_type: &str, is_dir: bool, is_symlink: bool) -> gio::Icon
     }
     gio::functions::content_type_get_icon(content_type)
 }
-
-use gtk::{gio, glib};

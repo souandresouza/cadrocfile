@@ -17,7 +17,7 @@ use crate::{
     archive,
     config::{SortKey, Theme, ViewMode},
     drives::{MountError, Volume},
-    fs::{FileEntry, ops, shred, trash},
+    fs::{FileEntry, ops, shred, sidecar, trash},
     ui::{
         dialogs::{self, NtfsChoice},
         window::{Clip, Location, Window},
@@ -232,12 +232,13 @@ impl Window {
         });
 
         // ── app ───────────────────────────────────────────────────────────
+        self.simple("command-palette", |this| this.show_palette());
         self.simple("about", |this| this.show_about());
         self.simple("shortcuts", |this| this.show_shortcuts());
         self.simple("preferences", |this| this.show_preferences());
         self.simple("new-window", |this| {
             let start = this.current_dir().unwrap_or_else(|| PathBuf::from("/"));
-            let window = Window::new(&this.app, this.config.borrow().clone(), start);
+            let window = Window::new(&this.app, this.config.borrow().clone(), Some(start));
             window.present();
             // The new window is owned by the application, not by us; leaking the
             // Rc here is deliberate and matches the window's lifetime.
@@ -350,7 +351,8 @@ impl Window {
             ("win.zoom-reset", &["<Ctrl>0"]),
             ("win.new-window", &["<Ctrl>n"]),
             ("win.close", &["<Ctrl>w"]),
-            ("win.shortcuts", &["<Ctrl>question"]),
+            ("win.shortcuts", &["<Ctrl>question", "F1"]),
+            ("win.command-palette", &["<Ctrl>k"]),
             ("win.context-menu", &["Menu", "<Shift>F10"]),
         ] {
             self.app.set_accels_for_action(action, keys);
@@ -661,7 +663,7 @@ impl Window {
                 }
             }
 
-            let job = ops::start_delete(paths.clone(), permanent);
+            let job = ops::start_delete(sidecar::with_companions(&paths), permanent);
             let title = job.kind.verb().to_string();
             let after = Rc::clone(&this);
 
@@ -673,7 +675,7 @@ impl Window {
                     // Trashing is reversible, so offer the reversal right there
                     // rather than making the user go and find the Trash.
                     let undo_target = Rc::downgrade(&after);
-                    let trashed = paths.clone();
+                    let trashed = sidecar::with_companions(&paths);
                     after.toast_with_action(
                         &format!("Moved {count} item{} to Trash", if count == 1 { "" } else { "s" }),
                         "Undo",
@@ -695,6 +697,7 @@ impl Window {
             return;
         }
         let paths: Vec<PathBuf> = entries.iter().map(|e| e.path.clone()).collect();
+        let paths = sidecar::with_companions(&paths);
         let passes = self.config.borrow().shred_passes;
         let caveat = paths.first().and_then(|p| shred::filesystem_caveat(p));
 
@@ -2275,6 +2278,7 @@ const SHORTCUT_GROUPS: &[(&str, ShortcutRows)] = &[
         &[
             ("Return", "Open"),
             ("F2", "Rename"),
+            ("Space", "Quick preview"),
             ("Ctrl+C / Ctrl+X / Ctrl+V", "Copy, cut, paste"),
             ("Ctrl+Shift+C", "Copy the full path"),
             ("Delete", "Move to Trash"),
@@ -2309,6 +2313,11 @@ const SHORTCUT_GROUPS: &[(&str, ShortcutRows)] = &[
     ),
     (
         "Window",
-        &[("Ctrl+N", "New window"), ("Ctrl+W", "Close window"), ("Ctrl+?", "This list")],
+        &[
+            ("Ctrl+K", "Command palette"),
+            ("Ctrl+N", "New window"),
+            ("Ctrl+W", "Close window"),
+            ("Ctrl+? / F1", "This list"),
+        ],
     ),
 ];

@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Phones and cameras under **Portable devices**: Android over MTP, iPhone over
   AFC and cameras in PTP mode are mounted through gvfs and browsed as folders
 - The installer pulls the matching gvfs backend for those devices
+- Command palette on `Ctrl+K`: fuzzy search over every action, folder and open
+  tab, with the most recently used commands first
+- Open tabs, their history and the active tab are restored on the next launch
+- Raw photo previews from the JPEG the camera embedded (CR2, NEF, ARW, ORF,
+  RAF, DNG, RW2 and more), plus camera, lens, exposure and date in the preview
+  caption and in **Properties**
+- Photo sidecars (`.xmp`) follow their photo through rename, copy, move, trash
+  and shred, including batch renames
+- `F1` opens the keyboard shortcut list alongside `Ctrl+?`
 
 ## [0.4.1] - 2026-09-28
 

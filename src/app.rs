@@ -52,12 +52,11 @@ pub fn run() -> glib::ExitCode {
     });
 
     app.connect_command_line(|app, command_line| {
-        let start = starting_directory(command_line);
         let config = Config::load();
         // Every parallel job reads its thread count from here, so it has to be
         // applied before any of them can be started.
         crate::fs::parallel::set_override(config.worker_threads);
-        let window = Window::new(app, config, start);
+        let window = Window::new(app, config, starting_directory(command_line));
         window.present();
 
         // `CADROCFILE_SNAPSHOT=<path>` renders the window to a PNG and exits.
@@ -133,11 +132,15 @@ pub fn run() -> glib::ExitCode {
 }
 
 /// Resolves the directory to open from the command line, falling back to home.
-fn starting_directory(command_line: &gio::ApplicationCommandLine) -> PathBuf {
+/// Resolves the directory to open from the command line.
+///
+/// `None` means nothing was asked for, so the saved session (or home) decides;
+/// that distinction is what lets an explicit path override session restore.
+fn starting_directory(command_line: &gio::ApplicationCommandLine) -> Option<PathBuf> {
     let home = || dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
 
     let arguments = command_line.arguments();
-    let Some(first) = arguments.get(1) else { return home() };
+    let first = arguments.get(1)?;
 
     let raw = PathBuf::from(first);
     // A relative argument is relative to where the *client* was invoked, which
@@ -149,10 +152,15 @@ fn starting_directory(command_line: &gio::ApplicationCommandLine) -> PathBuf {
     };
 
     if path.is_dir() {
-        return path;
+        return Some(path);
     }
     // Opening a file's folder is more useful than refusing outright.
-    path.parent().filter(|p| p.is_dir()).map(|p| p.to_path_buf()).unwrap_or_else(home)
+    Some(
+        path.parent()
+            .filter(|p| p.is_dir())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(home),
+    )
 }
 
 /// Installs the stylesheet with `accent` substituted in.

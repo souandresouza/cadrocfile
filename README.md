@@ -101,13 +101,20 @@ Optional: `pigz` (threaded `.tar.gz`), `ntfs-3g` (dirty NTFS), `ntfsprogs`
 
 ## What it does
 
-**Browsing** — tabs with their own history and scroll position · icon grid and
-details list · breadcrumb that becomes an editable path · drag and drop ·
-light/dark and a pick-your-own accent colour.
+**Browsing** — tabs with their own history and scroll position, reopened on the
+next launch · icon grid and details list · breadcrumb that becomes an editable
+path · drag and drop · light/dark and a pick-your-own accent colour.
+
+**Command palette** — `Ctrl+K` finds any action, folder or open tab by typing a
+few letters. Recently used commands come first, and the fuzzy match means
+`nf` reaches **New folder** without spelling it out.
 
 **Preview** — press `Space` on a file to see it without opening anything:
 images, PDFs and office documents, text and code, and video or audio playing in
-place. Arrow keys step through the folder; `Enter` opens the file.
+place. Arrow keys step through the folder; `Enter` opens the file. Raw photos
+from Canon, Nikon, Sony, Fuji, Olympus, Panasonic and others show the JPEG the
+camera embedded, with the camera, lens, exposure and date in the caption and in
+**Properties**.
 
 **Thumbnails** — photos, video, PDF and office documents, the right way up. Uses
 whatever thumbnailers your system has registered, falls back to `ffmpeg` and
@@ -166,6 +173,11 @@ credentials — Cadrocfile never sees them.
 `Ctrl+Shift+Delete` shreds, and tells you when your filesystem makes that
 promise meaningless.
 
+**Photo sidecars** — darktable's `.xmp` edits travel with their photo when it is
+renamed, copied, moved, trashed or shredded, in both the `photo.ORF.xmp` and
+`photo.xmp` layouts. A batch rename moves them all without one overwriting
+another.
+
 **Internationalization** — uses gettext for translations. Currently supports
 pt-BR. Add more languages by creating `po/<lang>.po` files.
 
@@ -212,10 +224,11 @@ stutter. Settings → Performance overrides it.
 
 ## Shortcuts
 
-`Ctrl+?` lists them all in the app.
+`Ctrl+?` or `F1` lists them all in the app.
 
 | Key | Action |
 | --- | --- |
+| `Ctrl+K` | Command palette (actions, folders and tabs) |
 | `Ctrl+T` / `Ctrl+W` / `Ctrl+Tab` | New tab / close / cycle |
 | `Alt+←` `Alt+→` `Alt+↑` | Back / forward / up |
 | `Ctrl+L` / `Ctrl+F` / `Ctrl+H` | Edit path / search / hidden files |

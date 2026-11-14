@@ -130,6 +130,41 @@ fn build_single(page: &adw::PreferencesPage, entry: &FileEntry, stop: &Arc<Atomi
     advanced.add(&info_row("Full path", &entry.path.to_string_lossy()));
     advanced.add(&info_row("Media type", &precise_content_type(entry)));
     page.add(&advanced);
+
+    if !entry.is_dir {
+        spawn_exif(page, &entry.path);
+    }
+}
+
+/// Adds a "Photo" group once the EXIF has been read off the main thread.
+///
+/// The whole group is added at the end rather than showing placeholder rows:
+/// most files have no EXIF at all, and an empty group that appears and then
+/// stays empty is worse than one that arrives a moment late, only when it has
+/// something to say.
+fn spawn_exif(page: &adw::PreferencesPage, path: &Path) {
+    let (tx, rx) = async_channel::bounded(1);
+    let path = path.to_path_buf();
+
+    std::thread::Builder::new()
+        .name("cadrocfile-exif".into())
+        .spawn(move || {
+            let _ = tx.send_blocking(crate::fs::exif::read(&path));
+        })
+        .ok();
+
+    let page = page.clone();
+    glib::spawn_future_local(async move {
+        let Ok(rows) = rx.recv().await else { return };
+        if rows.is_empty() {
+            return;
+        }
+        let group = adw::PreferencesGroup::builder().title("Photo").build();
+        for (title, value) in rows {
+            group.add(&info_row(&title, &value));
+        }
+        page.add(&group);
+    });
 }
 
 /// The entry's media type, asking gio to look inside the file if the name alone
